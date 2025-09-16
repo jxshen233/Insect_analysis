@@ -1,0 +1,571 @@
+---
+title: "Untitled"
+output: html_document
+date: '2022-04-21'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r }
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(phyloseq,vegan,ggplot2,ggpubr,ggsci,ape,dplyr,xlsx,remedy,reshape2,stringr,corrplot,ggthemes,tidyr)
+set.seed(1)
+library(jintao)
+```
+
+
+```{r}
+group<-read.csv("data/group.csv",row.names = 1)
+group$Host_Species<-factor(group$Host_Species, levels=c("T. castaneum" ,   "L. oryzae"   ,    "R. dominica"  ,   "O. surinamensis" ,          "S. zeamais" , "Flour" ))
+physeq <-import_biom("data/asv_taxon_bac.biom",treefilename = "data/ASV_phylo_bac.tre")
+tax<-tax_table(physeq);colnames(tax)<-c("Domain","Kingdom","Phylum","Class","Order","Family","Genus","Species");tax_table(physeq)<-tax_table(tax);rm(tax)
+physeq_bac<-merge_phyloseq(physeq,sample_data(group))
+physeq_bac_ori<-physeq_bac
+
+
+physeq_bac<-physeq_bac_ori
+physeq_bac<-prune_taxa((!str_detect(tax_table(physeq_bac)[,"Family"],"Mitochondr|Chloroplast")
+                       & !str_detect(tax_table(physeq_bac)[,"Phylum"],"unclassi"))
+                         ,physeq_bac)
+# tmp<-physeq_bac %>% subset_samples(Host_Species=="Flour") ;tmp<-taxa_names(tmp)[taxa_sums(tmp)==0]
+# physeq_bac<-prune_taxa(tmp,physeq_bac)
+# physeq_bac<-prune_samples(sample_sums(physeq_bac)>0,physeq_bac)
+physeq_bac<-subset_samples(physeq_bac,Host_Species!="Flour")
+
+
+physeq_genus<-physeq_bac %>% subset_taxa(!(Genus %in% c("uncultured", "Incertae_Sedis","Unknown")) ) %>% tax_glom(taxrank = "Genus",NArm = T) %>% change_physeq_otu2rank_sample_name(Change_rank = T,which_rank = "Genus")
+```
+
+```{r Composition}
+library(microbiome)
+physeq<-physeq_bac_ori %>% subset_samples(DNA_RNA =="DNA") %>% aggregate_taxa(level = "Family") %>% transform(transform = "compositional")
+tmp<-taxa_sums(physeq); tmp<-tmp[order(tmp,decreasing = T)]
+if(length(tmp)>15) {tmp<-tmp[15:length(tmp)] %>% names() ;physeq<-merge_taxa2(x = physeq, tmp ,name = "Others")}  
+plot_composition(physeq,"Host_Species",group_by = "Host_Species", otu.sort="abundance")+ scale_fill_manual(values=colorRampPalette((pal_simpsons("springfield")(16)))(16), 
+                  breaks = c(taxa_names(physeq)[-which(taxa_names(physeq)=="Others")],"Others") %>% rev())
+ggsave("Barplot.no_clean.pdf", height = 5, width = 12)
+
+library(microbiome)
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA") %>% aggregate_taxa(level = "Phylum") %>% transform(transform = "compositional")
+tmp<-taxa_sums(physeq); tmp<-tmp[order(tmp,decreasing = T)]
+if(length(tmp)>15) {tmp<-tmp[15:length(tmp)] %>% names() ;physeq<-merge_taxa2(x = physeq, tmp ,name = "Others")}  
+plot_composition(physeq,"Host_Species",group_by = "Host_Species")+ scale_fill_manual(values=colorRampPalette((pal_npg("nrc")(10)))(16))
+ggsave("Barplot.clean.pdf", height = 5, width = 10)
+```
+
+
+```{r ALPHA}
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+otu_table(physeq)<-filter_otu_table(t(otu_table(physeq)),occur_number = 1) %>% t() %>% otu_table()
+
+tmp1<-jintao::alpha(t_otu = t(otu_table(physeq)),phy_tree(physeq)) 
+tmp1$hill_1<- hillR::hill_taxa(t(otu_table(physeq)), q = 1)
+group_data_analysis<-cbind(group[rownames(tmp1),],tmp1)
+
+
+tmp_compare<-compare_means(group_data_analysis,formula = Richness~Host_Species  , p.adjust.method = "none", method = "t.test") %>% mutate(p.adj = format.pval(p.adj, digits = 2))
+group_data_analysis$Host_Species<-factor(group_data_analysis$Host_Species, c(group_name,"Flour"))
+ ggboxplot(data = group_data_analysis,x="Host_Species", y= "Shannon", fill="Host_Species") +
+  scale_y_continuous(limits = c(0, NA), expand = expand_scale(mult = c(0, 0.1))) +
+  theme_bw() + theme(axis.text.x = element_text(face  = "italic"), legend.position = "none") +scale_fill_manual(values=c(fill_color,"Flour"="#757575"))
+ggsave("alpha.pdf",height = 4,width = 6)
+```
+
+```{r fungi}
+group<-read.csv("data/group.csv",row.names = 1)
+group$Host_Species<-factor(group$Host_Species, levels=c("T. castaneum" ,   "L. oryzae"   ,    "R. dominica"  ,   "O. surinamensis" ,          "S. zeamais" , "Flour" ))
+physeq <-import_biom("data/asv_taxon_fun.biom")
+tax<-tax_table(physeq);colnames(tax)<-c("Domain","Kingdom","Phylum","Class","Order","Family","Genus","Species");tax_table(physeq)<-tax_table(tax);rm(tax)
+physeq_fun<-merge_phyloseq(physeq,sample_data(group))
+physeq_fun_ori<-physeq_fun
+
+
+physeq_fun<-physeq_fun_ori
+physeq_fun<-prune_taxa((!str_detect(tax_table(physeq_fun)[,"Family"],"Mitochondr|Chloroplast")
+                        & !str_detect(tax_table(physeq_fun)[,"Phylum"],"unclassi"))
+                       ,physeq_fun)
+# physeq_fun<-subset_samples(physeq_fun,Host_Species!="Flour")
+
+physeq_genus<-physeq_fun %>% subset_taxa(!(Genus %in% c("uncultured", "Incertae_Sedis","Unknown")) ) %>% tax_glom(taxrank = "Genus",NArm = T) %>% change_physeq_otu2rank_sample_name(Change_rank = T,which_rank = "Genus")
+
+
+library(microbiome)
+physeq<-physeq_fun %>% subset_samples(DNA_RNA =="DNA") %>% aggregate_taxa(level = "Family") %>% transform(transform = "compositional")
+taxa_names(physeq)<-str_remove(taxa_names(physeq),"_fam_Incertae_sedis")
+tmp<-taxa_sums(physeq); tmp<-tmp[order(tmp,decreasing = T)]
+if(length(tmp)>15) {tmp<-tmp[15:length(tmp)] %>% names() ;physeq<-merge_taxa2(x = physeq, tmp ,name = "Others")}  
+plot_composition(physeq,"Host_Species",group_by = "Host_Species", otu.sort="abundance")+ scale_fill_manual(values=colorRampPalette((pal_igv()(16)))(16), 
+                                                                                                           breaks = c(taxa_names(physeq)[-which(taxa_names(physeq)=="Others")],"Others") %>% rev())
+
+
+ggsave("Barplot.fun.pdf", height = 5, width = 8)
+
+
+physeq<-physeq_fun %>% subset_samples(DNA_RNA =="DNA")
+otu_table(physeq)<-filter_otu_table(t(otu_table(physeq)),occur_number = 1) %>% t() %>% otu_table()
+
+tmp1<-jintao::alpha(t_otu = t(otu_table(physeq))) 
+tmp1$hill_1<- hillR::hill_taxa(t(otu_table(physeq)), q = 1)
+group_data_analysis<-cbind(group[rownames(tmp1),],tmp1)
+
+
+tmp_compare<-compare_means(group_data_analysis,formula = Richness~Host_Species  , p.adjust.method = "none", method = "t.test") %>% mutate(p.adj = format.pval(p.adj, digits = 2))
+group_data_analysis$Host_Species<-factor(group_data_analysis$Host_Species, c(group_name,"Flour"))
+ggboxplot(data = group_data_analysis,x="Host_Species", y= "Shannon", fill="Host_Species") +
+  scale_y_continuous(limits = c(0, NA), expand = expand_scale(mult = c(0, 0.1))) +
+  theme_bw() + theme(axis.text.x = element_text(face  = "italic"), legend.position = "none") +
+  scale_fill_manual(values=c(fill_color,"Flour"="#757575"))
+ggsave("alpha.fun.pdf",height = 3.5,width = 5)
+
+
+pp<-plot_ordination(physeq, ordinate(physeq, method = "PCoA", distance = "bray") , type="samples",
+color="Host_Species")+geom_point(size=3,alpha=0.5)+theme_bw() +stat_ellipse() ;pp
+# pp+geom_text(aes(label =  ALL_TYPE),alpha=0.5)  + scale_color_manual(values = c("#fe827c", "#80b9e1")) +
+#   theme_bw() + theme(axis.text = element_text(size = 5)) +
+#   labs(x = "NMDS1", y = "NMDS2") + theme(axis.title = element_text(size = 8), axis.text = element_blank())
+physeq<-physeq_fun %>% subset_samples(DNA_RNA =="DNA")
+p_tsne_bray_dna<-phylosmith::tsne_phyloseq(physeq_fun %>% subset_samples(DNA_RNA =="DNA"),
+                                           "Host_Species",perplexity = 4,method = "bray")
+p_tsne_bray_dna<-p_tsne_bray_dna+scale_fill_manual(values=c(fill_color[c(2,3,5)],"Flour"="#757575"))+theme(legend.position = c(0.87, 0.88))
+p_tsne_bray_dna 
+
+ggsave(plot = p_tsne_bray_dna,filename = "p_tsne.fun.pdf",height = 5,width = 5)
+```
+
+
+```{r p_enrich}
+unique(do.call(rbind,results_each_list)$Phylum)
+library(microbiome)
+source("D:/Myfile/Research/Script/amplicon_data_analysis/find.top.taxa.txt")
+physeq<-physeq_genus 
+p_enrich<-list()
+results_each_list<-list()
+library(DAtest)
+for(i in 1:6){
+  if(i%in%1:5){
+    i=group_name[i]
+    tmp_physeq<-subset_samples(physeq,Host_Species==i)
+  } else {
+    i="Flour"
+    tmp_physeq<-physeq_bac_ori %>% subset_taxa(!str_detect(Family,"Mitochondr|Chloroplast"))%>% subset_taxa(!(Genus %in% c("uncultured", "Incertae_Sedis","Unknown")) ) %>% tax_glom(taxrank = "Genus",NArm = T) %>% change_physeq_otu2rank_sample_name(Change_rank = T,which_rank = "Genus") %>% subset_samples(Host_Species==i)
+  }
+  
+  
+  ##select genus
+  a<-taxa_sums(tmp_physeq);a<-a[order(a,decreasing = T)];selected<-names(a[1:15])
+  
+  tmp_physeq<-subset_taxa(tmp_physeq,Genus %in% selected)
+  results <-DA.erq2(tmp_physeq,"DNA_RNA",paired = "sample_number")
+  results$Feature<-factor(results$Feature,levels = selected %>% rev())
+  results$signif<- gtools::stars.pval(results$pval) 
+  
+  
+  results_each<-list()
+  for(j in unique(meta(tmp_physeq)$sample_number)){
+    results_each[[j]] <-DA.ttt(subset_samples(tmp_physeq, sample_number==j),"DNA_RNA") %>% mutate(sample_number=j)
+    }
+  results_each<-do.call(rbind,results_each)
+  results_each$Feature<-factor(results_each$Feature,levels = selected %>% rev())
+  
+  results_each$Feature<-results_each$Feature %>% str_remove("g__|o__|c__") %>%  str_remove("-Caballeronia-Paraburkholderia|sensu_stricto_1") %>%  str_replace("f__"," ")%>%  str_replace("unclassified_|norank_","unclas. ")  %>% str_remove("norank") %>% str_remove("o__|c__")
+   results$Feature    <- results$Feature     %>% str_remove("g__|o__|c__") %>%  str_remove("-Caballeronia-Paraburkholderia|sensu_stricto_1") %>%  str_replace("f__"," ")%>%  str_replace("unclassified_|norank_","unclas. ")  %>% str_remove("norank")%>% str_remove("o__|c__")
+  scale_range<-max(results_each$log2FC,na.rm = T)*1.2
+  results_each_list[[i]] <-results_each %>% mutate(Host_Species=i)
+p_enrich[[i]] <-  ggplot(results_each, aes(y = Feature, x = log2FC))+
+        #geom_bin2d(binwidth = c(0.5, 0.5))+
+        geom_boxplot(alpha=.5,size = 1)+
+        xlab("Fold change (log2)")+ylab("") +
+        scale_x_continuous(limits = c(-scale_range,scale_range))+
+        geom_vline(xintercept = 0,linetype = 2)+
+        geom_text(results %>% filter(ordering=="DNA>RNA"), mapping = aes(y = Feature, label=signif),x=scale_range,color="black",vjust=0.75)+
+        geom_text(results %>% filter(ordering=="RNA>DNA"), mapping = aes(y = Feature, label=signif),x=scale_range,color="red",vjust=0.75)+
+        scale_color_manual(values = c("grey","darkred"))+
+        guides(color=FALSE)+
+        theme_bw()+
+        theme(panel.grid = element_blank(),
+              axis.title = element_text(size=8),
+              aspect.ratio = 1,
+              legend.position = "none",
+              axis.text.y.left = element_text(face = "italic"))+
+  labs(title = i) + theme(plot.title = element_textbox(hjust = 0.5, margin = margin(t = 5, b = 5) ,size=12, face="italic"))
+}
+
+tmp<-ggarrange(plotlist = p_enrich,nrow=2, ncol = 3,align = "hv")
+ggsave("p_enrich.pdf",tmp, height = 8,width = 14);rstudioapi::viewer("p_enrich.pdf")
+
+
+#use same taxa
+  a<-make_bar_per_phyloseq(physeq_bac %>% subset_samples(DNA_RNA =="RNA"),group_head = group_head,group_name = group_name,level="Genus", display_number = 15)
+  
+
+```
+
+```{r tSNE}
+pp<-plot_ordination(physeq, ordinate(physeq, method = "PCoA", distance = "bray") , type="samples",
+color="Host_Species")+geom_point(size=3,alpha=0.5)+theme_bw() +stat_ellipse() 
+# pp+geom_text(aes(label =  ALL_TYPE),alpha=0.5)  + scale_color_manual(values = c("#fe827c", "#80b9e1")) +
+#   theme_bw() + theme(axis.text = element_text(size = 5)) +
+#   labs(x = "NMDS1", y = "NMDS2") + theme(axis.title = element_text(size = 8), axis.text = element_blank())
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+p_tsne_bray_dna<-phylosmith::tsne_phyloseq(physeq_bac %>% subset_samples(DNA_RNA =="DNA"),
+                                           "Host_Species",perplexity = 4,method = "bray")
+p_tsne_bray_dna<-p_tsne_bray_dna+scale_fill_manual(values=c(fill_color,"Flour"="#757575"))+theme(legend.position = c(0.87, 0.88))
+p_tsne_bray_dna 
+p_tsne_bray_rna<-phylosmith::tsne_phyloseq(physeq_bac %>% subset_samples(DNA_RNA =="RNA"),
+                                           "Host_Species",perplexity = 4,method = "bray") ;p_tsne_bray_rna
+p_tsne_bray_rna<-p_tsne_bray_rna +scale_fill_manual(values=c(fill_color,"Flour"="#757575"))+theme(legend.position = "none")
+
+tmp<-ggarrange(p_tsne_bray_dna,p_tsne_bray_rna)
+ggsave(plot = tmp,filename = "p_tsne.pdf",height = 5,width = 10)
+
+```
+
+```{r Upset}
+library(UpSetR)
+##enrich
+otu<-physeq_bac %>% merge_samples(group = "Host_Species") %>% otu_table() %>% as.data.frame()
+tmp<-otu
+tmp[tmp>0]<-1
+tmp<-t(tmp) %>% as.data.frame()
+p_upset<-upset(tmp,nsets = 5,order.by = c( "freq"), decreasing = c(T),text.scale = 1.5, sets=rev(group_name), keep.order=T, nintersects  = 15) %>% ggplotify::as.ggplot()
+```
+
+```{r make_bar_per}
+source("D:/Myfile/Research/Script/amplicon_data_analysis/make_bar_per_phyloseq.R")
+group_head = "Host_Species"
+group_name = c("T. castaneum",  "L. oryzae", "S. zeamais" , "R. dominica" , "O. surinamensis" ,"Flour")
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+p_bar_per<-make_bar_per_phyloseq(physeq,group_head = group_head,group_name = group_name,level="Genus")
+
+fill_color<-pal_npg()(9)[1:5];names(fill_color)<-group_name
+p_bar_per<-p_bar_per+scale_fill_manual(values=fill_color)
+
+ggsave(plot = p_bar_per,filename = "p_bar_per.pdf",height = 7,width = 10)
+
+```
+
+```{r beta_pattern}
+group_head<-"Host_Species"
+group_name<-c("T. castaneum" ,   "L. oryzae"   ,    "R. dominica"  ,   "O. surinamensis" ,          "S. zeamais"  )
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+
+
+beta_pattern_results<-list()
+for (i in group_name) {
+      otu<-prune_samples( sample_data( physeq )[[ group_head ]]==i,physeq) %>% otu_table() %>% as.data.frame()
+      otu<-t(otu) 
+      beta_pattern_results[[i]]<-beta_pattern(otu,method = "POD") %>% mutate(Group=i)
+    }
+beta_pattern_results<- do.call(rbind, beta_pattern_results) %>% as.data.frame()
+    
+    
+df_beta_pattern_results<- melt(beta_pattern_results,id.vars = c("Group"))
+df_beta_pattern_results$Group<-factor(df_beta_pattern_results$Group,rev(group_name))
+library(ggpattern)
+p_beta_pattern<-ggplot(data = df_beta_pattern_results,aes( x = Group , y = value, fill=variable, pattern=variable)) +
+  geom_bar_pattern(position = "stack",
+                   color = "#515151", 
+                   pattern_fill = "#515151",
+                   pattern_angle = 45,
+                   pattern_spacing =0.10 ,
+                   stat="identity",size=0.5) + 
+  coord_flip() +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.25)) +
+  labs(y = "Relative Complement", x = "",fill="")  + theme_minimal() + theme(legend.position = "top")  +
+  theme(plot.background = element_rect(fill = "transparent",colour = NA))+ #+ scale_fill_manual( values =  c("Repl"="#a1b6ed", "RichDif"="#ecbdb5", "Similarity"="#b2ee9a"))
+ scale_fill_manual( values =  c("Repl"="#a1b6ed", "RichDif"="#ecbdb5", "Similarity"="#b2ee9a") %>% rev())+guides(pattern=F); p_beta_pattern
+ggsave(filename = "p_beta_pattern.pdf",p_beta_pattern,height = 4,width = 6)
+
+
+
+ggarrange(p_tsne_bray_dna, p_tsne_bray_rna ,p_upset,p_bar_per,p_beta_pattern,NA,ncol = 3,align = "hv")
+
+```
+
+
+```{r iCAMP}
+physeq <-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+
+library(iCAMP)
+t_otu<-as.data.frame(t(otu_table(physeq)))
+phy<-phy_tree(physeq)
+group<-sample_data(physeq) %>% data.frame()
+# qpen_bac<-qpen(t_otu,tree=phy,nworker=4,memory.G	=10, output.detail	=T)
+icamp.48<-icamp.big(t_otu,phy,nworker = 16,bin.size.limit = 48)
+
+tmp_info<-icamp.48$detail$processes$CbMPDiCBraya
+tmp_info$group1<-group[tmp_info$sample1,]$ALL_TYPE
+tmp_info$group2<-group[tmp_info$sample2,]$ALL_TYPE
+tmp_info<-tmp_info[tmp_info$group1==tmp_info$group2,]
+a<-tmp_info %>% group_by(group1) %>% summarise_all(mean)
+a
+
+
+
+qpen_bac<-qpen(t_otu,tree=phy,nworker=16,memory.G	=10, output.detail	=T)
+
+assembly<-qpen_bac$result
+assembly$group1<-group[assembly$sample1,]$ALL_TYPE
+assembly$group2<-group[assembly$sample2,]$ALL_TYPE
+assembly_samgroup<-assembly[assembly$group1==assembly$group2,] ####assembly_samgroup<-assembly; assembly_samgroup$group1<-paste(assembly_samgroup$group1,assembly_samgroup$group2,sep="_")
+tmp_look<-assembly_samgroup[,-c(1:6)] %>% group_by(group1,process) %>% dplyr::count()
+tmp_look<-tmp_look %>% reshape2::dcast(group1~process)
+assembly_process_group<-t(apply(tmp_look[,-1], 1, function(x) x / sum(x,na.rm = T)))
+rownames(assembly_process_group)<-(tmp_look$group1)
+assembly_process_group
+
+
+ggplot(assembly_samgroup) +
+ aes(x = group1, y = bNTI) +
+ geom_boxplot(fill = "#0c4c8a") +
+ theme_minimal()
+
+
+
+
+
+library(NST)
+tnst=tNST(comm=t_otu, group=group[,c("Host_Species","DNA_RNA")], dist.method="jaccard",
+          abundance.weighted=TRUE, rand=1000,
+          nworker=16, null.model="PF", between.group=TRUE,
+          SES=TRUE, RC=TRUE)
+tnst[["index.grp"]]
+
+df_tnst<-tnst[["index.grp"]]
+df_tnst<-df_tnst %>% mutate(Stochasticity=NST.i.ruzicka,Determinism=1-NST.i.ruzicka) %>% select(group,Stochasticity,Determinism) %>% melt()
+df_tnst$group<-factor(df_tnst$group, levels=c("T. castaneum" ,   "L. oryzae"   ,    "R. dominica"  ,   "O. surinamensis" ,      "S. zeamais"  ))
+df_tnst %>% ggplot() + 
+    geom_bar(aes(x=group,y=value,fill=variable), stat="identity",width=0.7) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.25)) +
+  labs(x = "", y = "Normalized Stochasticity Ratio",fill="") + scale_fill_npg() +theme_bw()+theme(legend.position = "top", plot.background = element_blank())  +
+  theme(legend.text = element_text(size=8),legend.key.size = unit(0.4, 'cm'))
+
+ggsave("NST.pdf",height = 4, width = 6)
+```
+
+
+```{r DOC}
+physeq <-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+t_otu<-as.data.frame(t(otu_table(physeq)))
+
+library(DOC)
+results_DOC <- DOC(t(t_otu), R=1000,cores=8)
+results<-results_DOC
+(sum(results$LME$Slope >= 0) + 1) / (length(results$LME$Slope) + 1)
+median(results[["FNS"]][["Fns"]])
+plot(results) + theme_bw()
+ggsave("DOC.pdf", height = 5, width = 7)
+```
+
+```{r phylo_z_scores}
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA") %>% rarefy_physeq()
+colnames(tax_table(physeq))<-c("Domain","Kingdom", "Phylum", "Class", "Order", 
+                           "Family", "Genus", "Species")
+physeq<-prune_taxa(taxa_sums(physeq)>10,physeq) %>% subset_taxa(!str_detect(Phylum, "unclassifi|unknown")) ;physeq<-prune_samples(sample_sums(physeq)>0,physeq)
+OTU<-data.frame(otu_table(physeq)) ##Phylum
+taxonomy<-data.frame(rownames(tax_table(physeq)),tax_table(physeq)[,"Family"] ) #taxonomy4  Family
+phy<-phy_tree(physeq)
+
+nfactors<-8
+results_phylo_z_score<-phylo_z_score(OTU = OTU,taxonomy = taxonomy,phy = phy,ncores=14,nfactors = nfactors )
+ntd_spp_cluster<-results_phylo_z_score[["ntd_spp_cluster"]]
+pf_sum_score<-results_phylo_z_score[["pf_sum_score"]]
+results_phylo_z_score[["ntd_spp_cluster_constant"]]
+# pp<-results_phylo_z_score[["pp"]]
+
+
+
+# my_col<- colorRampPalette((pal_npg("nrc")(10)))(10)
+my_col<- c(colorRampPalette((pal_lancet()(9)))(9), "#f6f5ee")
+source("D:/Myfile/Research/Script/amplicon_data_analysis/pf.tree.txt")
+tmp_node_number<-pf.tree.my(pf_sum_score,tree = phy, nfactors = nfactors, ncores = 12)
+results<-list()
+results_size<-matrix(nrow=nfactors,ncol = 4) %>% data.frame()
+for( i in 1: length(tmp_node_number) ) {
+  tmp<- tryCatch(treeio::tree_subset(phy, tmp_node_number[i],levels_back = 0), error=function(e){return(treeio::tree_subset(phy, tmp_node_number[i],levels_back = 1))} )
+  print(length(tmp$tip.label))
+  cluster_number<-paste0("Cluster" ,i)
+  results[[cluster_number]]<-(data.frame(label= tmp$tip.label, 
+                    node_cluster=cluster_number ))
+  results_size[i,]<- c( cluster_number, length(tmp$tip.label), tmp_node_number[i], my_col[i])
+}
+results_size<-results_size %>% mutate(X2=as.numeric(X2), X3=as.numeric(X3)) %>% arrange(X2)
+results<-do.call(rbind,results[results_size$X1])
+results <-results[!duplicated(results[,1]),]
+
+
+pp<-ggtree(phy)
+for( node in nfactors:1){
+  print(node)
+  try(pp<- pp + geom_highlight(node = results_size[node,3],alpha=0.6,fill= results_size[node,4], extend =0.05)  )
+}
+df<- phy %>% left_join( ntd_spp_cluster,  by=c("label"="species"))
+df_bar<-as_tibble(df) %>% as.data.frame()
+df_bar<-df_bar %>% left_join(results, by = "label")
+df_bar<-df_bar[!is.na(df_bar$taxonomy),] %>% select(label,taxonomy:last_col());colnames(df_bar)[1]<-"id"
+# pp+  geom_label(aes(x=branch, label=node))+geom_facet(data =df_bar , mapping = aes(x = sum_score,color=node_cluster), panel = "bar", geom = geom_point,  orientation = 'y')+theme_light()
+color_vector<-c(results_size$X4);names(color_vector)<-results_size$X1;color_vector<-color_vector[order(names(color_vector))]
+pp + geom_facet(panel = 'Total Phyloscore', data = df_bar, geom = geom_bar,mapping = aes(x = sum_score,fill=node_cluster),
+               orientation = 'y', width = 1, stat='identity') + scale_fill_manual(values = color_vector) +
+  theme_pubr()+theme(legend.position = "right")
+
+ggsave("phylo_score.pdf",height =8,width = 8 )
+
+
+## see which tax are in HoS clade
+tax<-data.frame(label=rownames(tax_table(physeq)), tax_table(physeq))
+df_phylo_z_scores_ratio<-results %>% left_join(tax,by = "label") #%>% filter(!(node_cluster%in% c("Cluster2","Cluster1")))
+ggplot(df_phylo_z_scores_ratio ) +
+  aes(x = node_cluster, fill = Class) +  #  taxonomy3 Phylum Class Order Family
+  geom_bar()  +
+  theme_bw()+scale_fill_igv() + scale_fill_manual(values=colorRampPalette((pal_igv()(51)))(51))
+
+
+
+library(microbiome)
+ps<-physeq %>% aggregate_taxa(level = "Family") 
+# colnames(tax_table(ps))<-c("Domain","Kingdom", "Phylum", "Class", "Order", 
+#                            "Family", "Genus", "Species")
+ps<-add_besthit(ps) %>% microbiome::transform("compositional")
+plot_core( ps,
+          plot.type = "heatmap", 
+          colours = rev(RColorBrewer::brewer.pal(5, "RdBu")),
+          prevalences = seq(0, 1, .05), 
+          detections = round(10^seq(log10(0.1), log10(20), length = 9), 4), 
+          min.prevalence = prevalence(ps, sort = TRUE)[30]) +
+  labs(x = "Detection Threshold\n(Relative Abundance (%))")
+          
+
+
+df_phylo_z_score<-results_phylo_z_score[["ntd_spp_cluster_constant"]] %>% 
+  left_join(data.frame(species=rownames(tax_table(physeq)),
+                       tax_table(physeq) %>% as.data.frame() %>% select(Family:Species))) %>% 
+  arrange(sum_score)
+otu_table(physeq)<-physeq %>% microbiome::abundances(transform = "compositional") %>% otu_table(taxa_are_rows = T)
+OTU<-(psmelt(physeq)) %>% group_by(OTU) %>% summarise(value=mean(Abundance)) ##Phylum
+df_phylo_z_score<-df_phylo_z_score %>% left_join(OTU,by=c("species"="OTU"))
+# View(df_phylo_z_score)
+df_phylo_z_score<-df_phylo_z_score %>% select(species,sum_score,Family,Species,value)
+df_phylo_z_score
+```
+
+
+```{r}
+physeq<-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+physeq<-prune_taxa(taxa_sums(physeq)>0,physeq)
+
+NTD_list<-list()
+taxa<-df_phylo_z_scores_ratio$Class %>% unique() # "o__Burkholderiales"
+for (i in taxa){
+  tmp<-NTD_or_MNS_among_all(physeq %>% subset_taxa(Class== i) ) %>% as.data.frame() %>% mutate(taxa=i) ;colnames(tmp)[1]<-"NTD";
+  NTD_list[[i]] <- tmp
+  if((i==taxa[length(taxa)])){ 
+    tmp<-NTD_or_MNS_among_all(physeq %>% subset_taxa(!(Class%in% taxa)  ) ) %>% as.data.frame() %>% mutate(taxa="non-HoS") ;colnames(tmp)[1]<-"NTD";
+    NTD_list[["non-HoS"]]<- tmp
+  }
+}
+NTD_list<-do.call(rbind,NTD_list) ; NTD_list$NTD<-log2(NTD_list$NTD)
+ggplot(NTD_list) +
+  aes(x = taxa, y = NTD) +
+  geom_violin(fill = "#112446",width=0.6) +
+  theme_pubr() +
+  labs(x="",y="Log10(NTD)") + theme(axis.text.x = element_text(size=13,angle = 30,vjust = 0.5) )
+ggsave("NTD.pdf", height=6, width = 8)
+
+# tmp_fasta<- seqinr::read.fasta("data/ASV_reps.fasta",forceDNAtolower = F,as.string = T)
+# library(rDNAse)
+# tmp_fasta_list<-list()
+# for(i in 1:length(tmp_fasta)){tmp_fasta_list[[i]]<-as.character(tmp_fasta[[i]]) }  ;names(tmp_fasta_list) <- attr(tmp_fasta,"name")
+# tmp_fasta_list<- tmp_fasta_list[taxa_names(physeq)]
+# tmp_matrix = parSeqSim(tmp_fasta_list, cores = 16, type = 'local')
+# tmp_matrix<-as.data.frame(tmp_matrix);colnames(tmp_matrix)<-names(tmp_fasta_list);rownames(tmp_matrix)<-names(tmp_fasta_list)
+MNS_list<-list()
+taxa<-df_phylo_z_scores_ratio$Class %>% unique() # "o__Burkholderiales"
+tmp_matrix<-nucleotide_similarity_bac[taxa_names(physeq),taxa_names(physeq)]
+
+for (i in taxa){
+  tmp<-NTD_or_MNS_among_all(physeq %>% subset_taxa(Class== i) , median_nucleotide_similarity = T, nucleotide_similarity_matrix=tmp_matrix) %>%
+  as.data.frame() %>% mutate(taxa=i) ;colnames(tmp)[1]<-"MNS"
+  MNS_list[[i]] <- tmp
+  if((i==taxa[length(taxa)])){ 
+  tmp<-NTD_or_MNS_among_all(physeq %>% subset_taxa(!(Class%in% taxa)),median_nucleotide_similarity = T, nucleotide_similarity_matrix=tmp_matrix) %>% 
+      as.data.frame() %>% mutate(taxa="non-HoS") ;colnames(tmp)[1]<-"MNS"
+    MNS_list[["non-HoS"]]<- tmp
+  }
+}
+MNS_list<-do.call(rbind,MNS_list) 
+# MNS_list$MNS<-1- (MNS_list$MNS)
+ggplot(MNS_list) +
+  aes(x = taxa, y = MNS) +
+  geom_violin(fill = "#112446",width=0.6) +
+  theme_pubr() +
+  labs(x="",y="Median nucleotide similarity of β-nearest ASVs") + theme(axis.text.x = element_text(size=13,angle = 30,vjust = 0.5) )
+ggsave("MNS.pdf", height=6, width = 8)
+```
+
+
+```{r}
+
+tmp1<-physeq_bac %>% subset_samples(DNA_RNA =="DNA")
+tmp2<-physeq_bac %>% subset_samples(DNA_RNA =="RNA")
+library(ggtree)
+x <- hclust(distance(tmp1, method = "bray"),"single")%>% ape::as.phylo() 
+y <- hclust(distance(tmp2, method = "bray"),"single")%>% ape::as.phylo()
+x<-x %>% left_join(group, by=c("label" = "sample_name"))
+y<-y %>% left_join(group, by=c("label" = "sample_name"))
+p1<- ggtree(x)+ geom_tippoint(aes(color=Host_Species)) 
+p2<- ggtree(y)+ geom_tippoint(aes(color=Host_Species)) 
+
+p1
+p2
+
+p1+ geom_text(aes(label=node))
+p2+ geom_text(aes(label=node))
+# p1<-p1  %>% flip(107,106) %>% flip(103,20)
+# p2<-p2 %>%  flip(103,104) %>% flip(147,146) %>% flip(113,112) %>% flip(109,110) %>% flip(151,152)
+d1 <- p1$data
+d2 <- p2$data
+## reverse x-axis and 
+## set offset to make the tree on the right-hand side of the first tree
+d2$x <- max(d2$x) - d2$x + max(d1$x) + 1
+
+pp <- p1 + geom_tree(data=d2) +      
+  ggnewscale::new_scale_fill() + geom_tippoint(data=d2,aes(color=Host_Species))
+
+dd <- bind_rows(d1, d2) %>% 
+  filter(!is.na(label))
+
+pp + geom_line(aes(x, y, group=sample_number), data=dd, color='grey') #+ geom_text(aes(label=node))
+
+
+ 
+p_connect<-p1 + geom_tree(data=d2) +      
+  ggnewscale::new_scale_fill() + geom_tippoint(data=d2,aes(color=Host_Species)) + geom_line(aes(x, y, group=label,color=Host_Species), data=dd) 
+
+
+
+
+
+physeq_tmp<- tmp1%>% tax_glom("Rank3", NArm=F)
+df<-otu_table(physeq_tmp) %>% as.matrix() %>% t() %>%  as.data.frame()
+df<-cbind(rownames(df),df);colnames(df)[1]<-"tree.tip.label"
+df<-df %>% melt( id = "tree.tip.label")
+df<-df %>% cbind(tax_table(physeq_tmp)[df$variable,])
+a<- df %>% group_by(Rank3) %>% summarise(sum=sum(value)) %>% arrange(desc(sum));a<-a$Rank3[1:10]
+df$Rank3[!(df$Rank3 %in% a)]<-"Others"
+df$Rank3 <- factor(df$Rank3,levels = c(a,"Others"))
+
+
+
+p1_bar<-p1+geom_facet(panel = 'bar', data = df, geom = geom_bar,mapping = aes(x = value, fill = Rank3),
+                      orientation = 'y', width = 1, stat='identity',colour="gray")  + scale_fill_manual(values=colorRampPalette((pal_simpsons("springfield")(13)))(13), na.value = "black")  + theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.border = element_blank() ,panel.background = element_blank())+theme_clean() +
+  guides(fill=guide_legend(title="Phylum"))+theme(axis.text.x=element_blank(),
+                                                  axis.ticks.x=element_blank(),
+                                                  axis.text.y=element_blank(),
+                                                  axis.ticks.y=element_blank(),
+                                                  axis.line.x = element_blank(),
+                                                  axis.line.y = element_blank()) 
+
+```
+

@@ -1,0 +1,260 @@
+---
+title: "仓储害虫"
+author: "xqshen"
+date: "2025-08-25"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r_alpha diversity}
+physeq<-physeq
+alpha<-estimate_richness(physeq, measures = c("Shannon","Chao1","Simpson")) %>% bind_cols(physeq %>% meta())
+physeq<-physeq_fun
+alpha1<-estimate_richness(physeq_fun, measures = c("Shannon","Chao1","Simpson")) %>% bind_cols(physeq %>% meta())
+
+
+alpha_group<-alpha %>% filter(DNA_RNA=="RNA")
+##显著性计算
+stat.test.letter<-statistic_letter_singlelevel(alpha_group,"Chao1","Host_Species",wilcox = F) %>% mutate(max=max(max));stat.test.letter 
+
+
+##__细菌
+p_alpha<-ggplot(alpha, aes(x = Host_Species , y = Shannon,fill=Host_Species)) +  
+  geom_boxplot(width=0.4) +#调整箱子宽度
+  geom_text(aes(label=Letter,y=max(max)),stat.test.letter,size=5,color="black")+#把显著性标上字母
+  scale_fill_manual(values  = unifed_colors)+#自定义柱子颜色
+  facet_grid2(DNA_RNA~.)+
+  theme_bw()  +
+  theme(panel.grid = element_blank(),
+        legend.position = 'none') +
+  ylab("Shannon index") +
+  xlab(NULL);p_alpha
+
+
+
+p_b_shannon<-p_alpha
+p_b_chao1<-p_alpha
+p_b_shannon+p_b_chao1
+ggsave("p_b_alpha.pdf",height = 8,width=10);rstudioapi::viewer("p_b_alpha.pdf")
+
+
+
+##---真菌
+alpha_group<-alpha1 %>% filter(DNA_RNA=="DNA")
+##显著性计算
+stat.test.letter<-statistic_letter_singlelevel(alpha_group,"Shannon","Host_Species",wilcox = F) %>% mutate(max=max(max));stat.test.letter 
+
+p_alpha<-ggplot(alpha1, aes(x = Host_Species , y = Shannon,fill=Host_Species)) +  
+  geom_boxplot(width=0.4) +#调整箱子宽度
+  geom_text(aes(label=Letter,y=max(max)),stat.test.letter,size=5)+#把显著性标上字母
+  scale_fill_manual(values  = unifed_colors)+#自定义柱子颜色
+  facet_grid2(DNA_RNA~.)+
+  theme_bw()  +
+  theme(panel.grid = element_blank(),
+        legend.position = 'none') +
+  ylab("Shannon index") +
+  xlab(NULL);p_alpha
+
+p_f_shannon<-p_alpha
+p_f_chao1<-p_alpha
+p_f_chao1+p_f_shannon
+ggsave("p_f_alpha.pdf",height = 4,width=10);rstudioapi::viewer("p_f_alpha.pdf")
+
+
+anova_res <- aov(Shannon ~ Host_Species, data = alpha_group)
+TukeyHSD(anova_res)
+
+```
+
+
+```{r 组成}
+rank="Phylum"
+
+#调整physeq的整合量级
+ps<-physeq_bac  %>% select_tax_table(!!sym(rank)) %>% speedyseq::tax_glom(taxrank = rank)  %>% 
+  change_rare_phylum_name(max_number = 10,level = rank,relative = T,in_eachgroup = NULL) %>% 
+  aggregate_taxa(level = rank)
+
+csv_compo <- ps %>% subset_samples(DNA_RNA=="DNA")%>% merge_samples2("Host_Species",fun_otu = mean) %>% otu_table() %>% as.data.frame()
+
+write.csv(csv_compo,"b_d_genus.csv")
+#画图
+p_compo<-plot_composition(ps,
+                 sample.sort = "Host_Species",#样本排序方式,不接受直接传向量，只能调整physeq里的对象
+                 group_by = "Host_Species", #按变量分组
+                 otu.sort="abundance");p_compo
+       
+p_compo$data$DNA_RNA <- ifelse(grepl("c", p_compo$data$Sample),
+                               "RNA", "DNA")
+p_compo <- p_compo+facet_wrap(DNA_RNA ~Group,scales = "free_x",nrow = 2)+  scale_fill_manual(values=color_compo,
+                    )+
+  theme(axis.text.x=element_text(angle = 30,hjust = 0.5),
+        axis.title.x = element_blank())+
+          labs(fill=NULL);p_compo
+
+color_compo <- c(
+  "#FED439", "#709AE1", "#D2AF81", "#FD7446", "#D5E4A2", 
+  "#197EC0", "#F05C3B", "#46732E", "#71D0F5", "#370335", "#075149", 
+  "#C80813", "#91331F", "#1A9993", "#FD8CC1"
+)
+# 假设你的 Tax 水平是 levels(p_compo$data$Tax)
+tax_levels <- levels(p_compo$data$Tax)
+# 给所有物种先分配调色板
+color_named <- setNames(color_compo[seq_along(tax_levels)], tax_levels)
+# 单独覆盖 Others 的颜色为灰色
+color_named["Others"] <- "grey"
+p_compo <- p_compo +
+  scale_fill_manual(values = color_named);p_compo
+
+#改变others的顺序到最末尾
+p_compo$data<-p_compo$data %>% mutate(Tax=fct_relevel(Tax,"Others",after=100));p_compo
+
+
+ggsave("b_comp_Genus.pdf",height = 8,width=10);rstudioapi::viewer("b_comp_Genus.pdf")
+
+
+
+#------------真菌
+rank="Genus"
+
+#调整physeq的整合量级
+ps<-physeq_fun  %>% select_tax_table(!!sym(rank)) %>% speedyseq::tax_glom(taxrank = rank)  %>% 
+  change_rare_phylum_name(max_number = 15,level = rank,relative = T,in_eachgroup = NULL) %>% 
+  aggregate_taxa(level = rank)
+
+csv_compo <- ps %>% merge_samples2("Host_Species",fun_otu = mean) %>% otu_table() %>% as.data.frame()
+
+write.csv(csv_compo,"b_d_genus.csv")
+
+#画图
+p_compo<-plot_composition(ps,
+                 sample.sort = "Host_Species",#样本排序方式,不接受直接传向量，只能调整physeq里的对象
+                 group_by = "Host_Species", #按变量分组
+                 otu.sort="abundance");p_compo
+       
+p_compo$data$DNA_RNA <- ifelse(grepl("c", p_compo$data$Sample),
+                               "RNA", "DNA")
+p_compo <- p_compo+facet_wrap(DNA_RNA ~Group,scales = "free_x",nrow = 1)+  scale_fill_manual(values=color_compo,
+                    )+
+  theme(axis.text.x=element_text(angle = 30,hjust = 0.5),
+        axis.title.x = element_blank())+
+          labs(fill=NULL);p_compo
+
+color_compo <- c(
+  "#FED439", "#709AE1", "#D2AF81", "#FD7446", "#D5E4A2", 
+  "#197EC0", "#F05C3B", "#46732E", "#71D0F5", "#370335", "#075149", 
+  "#C80813", "#91331F", "#1A9993", "#FD8CC1"
+)
+# 假设你的 Tax 水平是 levels(p_compo$data$Tax)
+tax_levels <- levels(p_compo$data$Tax)
+# 给所有物种先分配调色板
+color_named <- setNames(color_compo[seq_along(tax_levels)], tax_levels)
+# 单独覆盖 Others 的颜色为灰色
+color_named["Others"] <- "grey"
+p_compo <- p_compo +
+  scale_fill_manual(values = color_named);p_compo
+
+#改变others的顺序到最末尾
+p_compo$data<-p_compo$data %>% mutate(Tax=fct_relevel(Tax,"Others",after=100));p_compo
+
+
+ggsave("fungi_comp_Phylum.pdf",height = 8,width=10);rstudioapi::viewer("fungi_comp_Phylum.pdf")
+
+
+
+
+
+
+```
+
+
+```{beta diversity}
+##调整具体画图的physeq
+ps<-subset_samples(physeq_bac,DNA_RNA=='DNA')#只有day30
+
+##计算多样性（bray），计算和提取前两个映射轴（PCoA，NMDS）,整合主成分分析结果和样品信息
+beta_diversity <- vegdist(t(otu_table(ps)), method = "bray")
+beta_result <- phyloseq::ordinate(ps, method = 'PCoA', distance = beta_diversity)
+beta_result<-beta_result$vectors[,c(1,2)] %>% as.data.frame()##PCoA
+beta_result<-cbind(beta_result,sample_data(ps))#要是报错了，就是没把beta_result转换成数据框
+
+#--只有day30
+p_beta <- ggplot(beta_result, aes(x = Axis.1, y = Axis.2, color = Host_Species  )) +
+  geom_point(size=3)+
+  theme_bw()+#使用黑白主题，简洁
+  theme(panel.grid = element_blank(),#去掉背景网格
+        axis.title = element_text(size = 12))+#设置轴标题字体大小
+  scale_colour_manual(values  = unified_colors);p_beta
+
+#添加置信区间
+p_beta +
+  stat_ellipse(aes(fill = Host_Species), 
+               geom = "polygon",
+               color = "black",
+               level = 0.95, alpha = 0.1,
+               show.legend = FALSE) +
+  scale_fill_manual(values = unified_colors)
+##整体permanova分析
+permanova <- adonis2(beta_diversity ~ Host_Species, data = meta %>% filter(DNA_RNA=="RNA"))
+summary(permanova)
+##加上信息，要自己调整下位置和需要的信息（x,y, Pr）
+p_beta<-p_beta+annotate('text', label = 'PERMANOVA', x = -0.5, y = 0.5, size = 3) +
+  annotate('text', label = sprintf('italic(P) < %.3f', permanova$Pr[1]), x = -0.5, y = 0.4, size = 3, parse = TRUE);p_beta
+
+
+beta_b_rna<-p_beta
+beta_b_dna<-p_beta
+beta_b_dna+beta_b_rna+plot_layout(guides = 'collect')
+
+
+ggsave("p_beta.pdf",width = 10,height = 4);rstudioapi::viewer("p_beta.pdf")
+
+#------------------tsne
+#细菌_dna
+p_tsne_bray_dna<-phylosmith::tsne_phyloseq(physeq %>% subset_samples(DNA_RNA =="DNA"),
+                                           "Host_Species",perplexity = 4,method = "bray")
+p_tsne_bray_dna<-p_tsne_bray_dna+scale_fill_manual(values=c(unified_colors,"Flour"="#757575"))+theme_bw()+theme(legend.position = c(0.87, 0.88));p_tsne_bray_dna
+#细菌_rna
+p_tsne_bray_rna<-phylosmith::tsne_phyloseq(physeq %>% subset_samples(DNA_RNA =="RNA"),
+                                           "Host_Species",perplexity = 4,method = "bray")
+p_tsne_bray_rna<-p_tsne_bray_rna+scale_fill_manual(values=c(unified_colors,"Flour"="#757575"))+theme_bw();p_tsne_bray_rna
+
+#真菌_dna
+p_tsne_fungi_dna<-phylosmith::tsne_phyloseq(physeq_fun %>% subset_samples(DNA_RNA =="DNA"),
+                                           "Host_Species",perplexity = 4,method = "bray")
+p_tsne_fungi_dna<-p_tsne_fungi_dna+scale_fill_manual(values=c(unified_colors,"Flour"="#757575"))+theme_bw();p_tsne_fungi_dna
+
+
+(p_tsne_fungi_dna+p_tsne_bray_rna)/p_tsne_fungi_dna
+ggsave("p_beta_tsne1.pdf",width = 12,height = 8);rstudioapi::viewer("p_beta_tsne1.pdf")
+
+
+
+
+
+```
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
